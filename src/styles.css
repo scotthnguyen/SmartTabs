@@ -37,35 +37,52 @@
 }
 
 .smart-tab-item {
+  position: relative;
   width: 100%;
   border: 1px solid transparent;
   background: transparent;
-  color: rgba(255, 255, 255, 0.8);
-  padding: 9px 12px;
+  color: rgba(255, 255, 255, 0.72);
+  padding: 9px 12px 9px 22px;
   border-radius: 10px;
   text-align: left;
   cursor: pointer;
   font-size: 13px;
   line-height: 1.35;
-  transition: all 0.18s ease;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.smart-tab-item::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+  transform: translateY(-50%);
+  transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 
 .smart-tab-item:hover {
   background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .smart-tab-item.smart-tab-active {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.07);
   color: #ffffff;
+}
+
+.smart-tab-item.smart-tab-active::before {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.35);
 }
 
 .smart-tab-highlight {
   outline: 2px solid rgba(255, 255, 255, 0.18);
   outline-offset: 6px;
   border-radius: 12px;
-  transition: outline 0.2s ease;
 }
 
 #smart-tabs-sidebar::-webkit-scrollbar {
@@ -77,6 +94,18 @@
   border-radius: 999px;
 }
 
-.smart-tab-missing {
-  opacity: 0.45;
+#smart-tabs-debug {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 360px;
+  max-height: 280px;
+  overflow: auto;
+  z-index: 2147483647;
+  background: rgba(0, 0, 0, 0.75);
+  color: white;
+  font-size: 11px;
+  padding: 12px;
+  border-radius: 12px;
+  white-space: pre-wrap;
 }

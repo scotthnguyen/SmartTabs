@@ -5,10 +5,7 @@
   "description": "Adds smart tabs to ChatGPT conversations.",
   "content_scripts": [
     {
-      "matches": [
-        "https://chatgpt.com/*",
-        "https://chat.openai.com/*"
-      ],
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
       "js": ["dist/content.js"],
       "css": ["src/styles.css"]
     }

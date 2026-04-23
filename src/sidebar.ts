@@ -2,11 +2,10 @@ import type { Section } from "./parser";
 
 const SIDEBAR_ID = "smart-tabs-sidebar";
 
-function clearActiveTabs() {
-  document.querySelectorAll(".smart-tab-item").forEach((item) => {
-    item.classList.remove("smart-tab-active");
-  });
-}
+let currentSections: Section[] = [];
+let activeScrollContainer: HTMLElement | null = null;
+let scrollTimeout: number | null = null;
+let lastActiveRawText: string | null = null;
 
 function normalizeText(text: string): string {
   return text.replace(/^You said:\s*/i, "").replace(/\s+/g, " ").trim();
@@ -17,6 +16,7 @@ function getScrollableAncestor(el: HTMLElement): HTMLElement | null {
 
   while (parent) {
     const style = window.getComputedStyle(parent);
+
     const canScroll =
       (style.overflowY === "auto" || style.overflowY === "scroll") &&
       parent.scrollHeight > parent.clientHeight;
@@ -36,22 +36,12 @@ function findLiveElement(section: Section): HTMLElement | null {
     )
   );
 
-  const matches = nodes.filter((node) => {
+  const match = nodes.find((node) => {
     const text = normalizeText(node.textContent ?? "");
     return text.toLowerCase() === section.rawText.toLowerCase();
   });
 
-  // Prefer actually visible/mounted elements
-  const visibleMatch = matches.find((node) => {
-    const rect = node.getBoundingClientRect();
-    return rect.height > 1 && rect.width > 1;
-  });
-
-  if (visibleMatch) return visibleMatch;
-
-  if (section.element?.isConnected) return section.element;
-
-  return matches[0] ?? null;
+  return match || (section.element?.isConnected ? section.element : null);
 }
 
 function getVisualTarget(el: HTMLElement): HTMLElement {
@@ -70,22 +60,13 @@ function getVisualTarget(el: HTMLElement): HTMLElement {
   return el;
 }
 
-function scrollToTarget(target: HTMLElement) {
+function jumpToTarget(target: HTMLElement) {
   const scrollContainer = getScrollableAncestor(target);
 
   if (!scrollContainer) {
-    console.log("NO SCROLL CONTAINER FOUND");
-    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.scrollIntoView({ behavior: "auto", block: "center" });
     return;
   }
-
-  const before = {
-    containerScrollTop: scrollContainer.scrollTop,
-    containerClientHeight: scrollContainer.clientHeight,
-    containerScrollHeight: scrollContainer.scrollHeight,
-    targetRect: target.getBoundingClientRect(),
-    containerRect: scrollContainer.getBoundingClientRect()
-  };
 
   const targetRect = target.getBoundingClientRect();
   const containerRect = scrollContainer.getBoundingClientRect();
@@ -93,27 +74,103 @@ function scrollToTarget(target: HTMLElement) {
   const targetTopInsideContainer =
     targetRect.top - containerRect.top + scrollContainer.scrollTop;
 
-  const desiredTop =
+  scrollContainer.scrollTop =
     targetTopInsideContainer - scrollContainer.clientHeight / 2;
+}
 
-  console.log("BEFORE SCROLL ATTEMPT", {
-    before,
-    targetTopInsideContainer,
-    desiredTop
+function setActiveTab(rawText: string) {
+  lastActiveRawText = rawText;
+
+  const items = Array.from(
+    document.querySelectorAll<HTMLButtonElement>(".smart-tab-item")
+  );
+
+  items.forEach((item) => {
+    if (item.dataset.rawText === rawText) {
+      item.classList.add("smart-tab-active");
+    } else {
+      item.classList.remove("smart-tab-active");
+    }
+  });
+}
+
+function getTopVisibleSection(scrollContainer: HTMLElement): Section | null {
+  const containerRect = scrollContainer.getBoundingClientRect();
+
+  let bestSection: Section | null = null;
+  let smallestTop = Infinity;
+
+  currentSections.forEach((section) => {
+    const liveElement = findLiveElement(section);
+    if (!liveElement) return;
+
+    const target = getVisualTarget(liveElement);
+    const rect = target.getBoundingClientRect();
+
+    if (rect.height <= 0) return;
+
+    const isVisible =
+      rect.bottom >= containerRect.top &&
+      rect.top <= containerRect.bottom;
+
+    if (!isVisible) return;
+
+    if (rect.top < smallestTop) {
+      smallestTop = rect.top;
+      bestSection = section;
+    }
   });
 
-  scrollContainer.scrollTop = desiredTop;
+  return bestSection;
+}
 
-  setTimeout(() => {
-    console.log("AFTER DIRECT SCROLLTOP", {
-      actualScrollTop: scrollContainer.scrollTop,
-      desiredTop,
-      targetRectAfter: target.getBoundingClientRect()
-    });
-  }, 100);
+function updateActiveFromScroll() {
+  if (!activeScrollContainer) return;
+
+  const section = getTopVisibleSection(activeScrollContainer);
+  if (!section) return;
+
+  setActiveTab(section.rawText);
+}
+
+function handleScroll() {
+  if (scrollTimeout !== null) {
+    window.clearTimeout(scrollTimeout);
+  }
+
+  scrollTimeout = window.setTimeout(() => {
+    updateActiveFromScroll();
+  }, 200);
+}
+
+function setupScrollTracking() {
+  const firstLive = currentSections
+    .map(findLiveElement)
+    .find((el): el is HTMLElement => Boolean(el));
+
+  if (!firstLive) return;
+
+  const scrollContainer = getScrollableAncestor(firstLive);
+  if (!scrollContainer) return;
+
+  if (activeScrollContainer === scrollContainer) {
+    updateActiveFromScroll();
+    return;
+  }
+
+  if (activeScrollContainer) {
+    activeScrollContainer.removeEventListener("scroll", handleScroll);
+  }
+
+  activeScrollContainer = scrollContainer;
+  activeScrollContainer.addEventListener("scroll", handleScroll);
+
+  updateActiveFromScroll();
 }
 
 export function renderSidebar(sections: Section[]) {
+  currentSections = sections;
+
   let sidebar = document.getElementById(SIDEBAR_ID);
 
   if (!sidebar) {
@@ -136,30 +193,36 @@ export function renderSidebar(sections: Section[]) {
     const item = document.createElement("button");
     item.className = "smart-tab-item";
     item.textContent = section.title;
+    item.dataset.rawText = section.rawText;
 
     item.addEventListener("click", () => {
-      clearActiveTabs();
-      item.classList.add("smart-tab-active");
-
       const liveElement = findLiveElement(section);
-
-      if (!liveElement) {
-        console.warn("Smart Tabs: message not currently mounted", section.rawText);
-        return;
-      }
+      if (!liveElement) return;
 
       const target = getVisualTarget(liveElement);
 
-      scrollToTarget(target);
+      jumpToTarget(target);
+      setActiveTab(section.rawText);
 
       target.classList.add("smart-tab-highlight");
       setTimeout(() => {
         target.classList.remove("smart-tab-highlight");
-      }, 1500);
+        updateActiveFromScroll();
+      }, 300);
     });
 
     list.appendChild(item);
   });
 
   sidebar.appendChild(list);
+
+  if (sections.length > 0) {
+    if (lastActiveRawText) {
+      setActiveTab(lastActiveRawText);
+    } else {
+      setActiveTab(sections[0].rawText);
+    }
+  }
+
+  setupScrollTracking();
 }
