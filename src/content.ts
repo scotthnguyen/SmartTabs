@@ -1,5 +1,5 @@
 import { parseSections, type Section } from "./parser";
-import { renderSidebar } from "./sidebar";
+import { renderSidebar, resetSidebarState } from "./sidebar";
 
 let updateTimeout: number | null = null;
 let currentChatKey = "";
@@ -8,7 +8,7 @@ const sectionMap = new Map<string, Section>();
 let orderedKeys: string[] = [];
 
 function getKey(section: Section): string {
-  return section.rawText.toLowerCase();
+  return section.turnId || section.rawText.toLowerCase();
 }
 
 function getChatKey(): string {
@@ -18,29 +18,19 @@ function getChatKey(): string {
 function resetForNewChat() {
   sectionMap.clear();
   orderedKeys = [];
+  resetSidebarState();
 }
 
 function mergeSections(newSections: Section[]) {
-  const parsedKeys = newSections.map(getKey);
-
   newSections.forEach((section) => {
     sectionMap.set(getKey(section), section);
   });
 
-  // Find where this visible DOM block belongs in the current sidebar order
-  const firstExistingKey = parsedKeys.find((key) => orderedKeys.includes(key));
-  const insertIndex =
-    firstExistingKey !== undefined ? orderedKeys.indexOf(firstExistingKey) : orderedKeys.length;
+  const orderedSections = Array.from(sectionMap.values()).sort(
+    (a, b) => a.domOrder - b.domOrder
+  );
 
-  // Remove any keys from this visible block so we can reinsert them in correct DOM order
-  orderedKeys = orderedKeys.filter((key) => !parsedKeys.includes(key));
-
-  // Insert the currently visible block in its actual DOM order
-  orderedKeys.splice(insertIndex, 0, ...parsedKeys);
-
-  const orderedSections = orderedKeys
-    .map((key) => sectionMap.get(key))
-    .filter((section): section is Section => Boolean(section));
+  orderedKeys = orderedSections.map(getKey);
 
   renderSidebar(orderedSections);
 }

@@ -30,41 +30,38 @@ function getScrollableAncestor(el: HTMLElement): HTMLElement | null {
 }
 
 function findLiveElement(section: Section): HTMLElement | null {
+  if (section.turnId) {
+    const el = document.querySelector(
+      `[data-turn-id-container="${section.turnId}"]`
+    ) as HTMLElement | null;
+
+    if (el) return el;
+  }
+
+  // fallback (rare)
   const nodes = Array.from(
     document.querySelectorAll<HTMLElement>(
-      '[data-message-author-role="user"], [data-turn="user"]'
+      '[data-message-author-role="user"]'
     )
   );
 
-  const match = nodes.find((node) => {
-    const text = normalizeText(node.textContent ?? "");
-    return text.toLowerCase() === section.rawText.toLowerCase();
-  });
-
-  return match || (section.element?.isConnected ? section.element : null);
+  return nodes.find((node) => {
+    return (
+      normalizeText(node.textContent ?? "").toLowerCase() ===
+      section.rawText.toLowerCase()
+    );
+  }) ?? null;
 }
 
 function getVisualTarget(el: HTMLElement): HTMLElement {
-  let current: HTMLElement | null = el;
-
-  while (current) {
-    const rect = current.getBoundingClientRect();
-
-    if (rect.height > 20 && rect.width > 100) {
-      return current;
-    }
-
-    current = current.parentElement;
-  }
-
-  return el;
+  return (el.closest("[data-turn-id-container]") as HTMLElement) || el;
 }
 
 function jumpToTarget(target: HTMLElement) {
   const scrollContainer = getScrollableAncestor(target);
 
   if (!scrollContainer) {
-    target.scrollIntoView({ behavior: "auto", block: "center" });
+    target.scrollIntoView({ behavior: "auto", block: "start" });
     return;
   }
 
@@ -74,8 +71,7 @@ function jumpToTarget(target: HTMLElement) {
   const targetTopInsideContainer =
     targetRect.top - containerRect.top + scrollContainer.scrollTop;
 
-  scrollContainer.scrollTop =
-    targetTopInsideContainer - scrollContainer.clientHeight / 2;
+  scrollContainer.scrollTop = targetTopInsideContainer - 16;
 }
 
 function setActiveTab(rawText: string) {
@@ -98,7 +94,7 @@ function getTopVisibleSection(scrollContainer: HTMLElement): Section | null {
   const containerRect = scrollContainer.getBoundingClientRect();
 
   let bestSection: Section | null = null;
-  let smallestTop = Infinity;
+  let bestDistanceFromTop = Infinity;
 
   currentSections.forEach((section) => {
     const liveElement = findLiveElement(section);
@@ -115,8 +111,10 @@ function getTopVisibleSection(scrollContainer: HTMLElement): Section | null {
 
     if (!isVisible) return;
 
-    if (rect.top < smallestTop) {
-      smallestTop = rect.top;
+    const distanceFromTop = Math.abs(rect.top - containerRect.top);
+
+    if (distanceFromTop < bestDistanceFromTop) {
+      bestDistanceFromTop = distanceFromTop;
       bestSection = section;
     }
   });
@@ -196,13 +194,42 @@ export function renderSidebar(sections: Section[]) {
     item.dataset.rawText = section.rawText;
 
     item.addEventListener("click", () => {
+      console.log("TAB CLICK FIRED", {
+        title: section.title,
+        rawText: section.rawText
+      });
+
       const liveElement = findLiveElement(section);
+
+      console.log("LIVE ELEMENT", {
+        found: Boolean(liveElement),
+        connected: liveElement?.isConnected,
+        element: liveElement
+      });
+
       if (!liveElement) return;
 
       const target = getVisualTarget(liveElement);
+      const scrollContainer = getScrollableAncestor(target);
+
+      console.log("TARGET + CONTAINER", {
+        target,
+        targetRect: target.getBoundingClientRect(),
+        scrollContainer,
+        scrollTopBefore: scrollContainer?.scrollTop,
+        scrollHeight: scrollContainer?.scrollHeight,
+        clientHeight: scrollContainer?.clientHeight
+      });
 
       jumpToTarget(target);
       setActiveTab(section.rawText);
+
+      setTimeout(() => {
+        console.log("AFTER JUMP", {
+          targetRectAfter: target.getBoundingClientRect(),
+          scrollTopAfter: scrollContainer?.scrollTop
+        });
+      }, 100);
 
       target.classList.add("smart-tab-highlight");
       setTimeout(() => {
@@ -225,4 +252,12 @@ export function renderSidebar(sections: Section[]) {
   }
 
   setupScrollTracking();
+}
+
+export function resetSidebarState() {
+  currentSections = [];
+  activeScrollContainer?.removeEventListener("scroll", handleScroll);
+  activeScrollContainer = null;
+  scrollTimeout = null;
+  lastActiveRawText = null;
 }

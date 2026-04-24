@@ -4,13 +4,11 @@ export interface Section {
   element: HTMLElement;
   rawText: string;
   domOrder: number;
+  turnId: string;
 }
 
 function normalizeText(text: string): string {
-  return text
-    .replace(/^You said:\s*/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return text.replace(/^You said:\s*/i, "").replace(/\s+/g, " ").trim();
 }
 
 function cleanTitle(text: string): string {
@@ -20,46 +18,98 @@ function cleanTitle(text: string): string {
     /^(can you|could you|help me|please|i need|how do i|what about|also)\s+/i,
     ""
   );
-  t = t.replace(/\s+/g, " ");
 
   const words = t.split(" ").slice(0, 7);
   const result = words.join(" ").trim();
 
-  if (!result) return "Untitled";
+  if (!result) return "";
   return result.charAt(0).toUpperCase() + result.slice(1);
+}
+
+function getFileName(container: HTMLElement): string | null {
+  const text = container.textContent ?? "";
+
+  const match = text.match(
+    /[\w\s()._-]+\.(pdf|docx?|pptx?|xlsx?|csv|txt|png|jpe?g|webp)/i
+  );
+
+  return match ? match[0].trim() : null;
+}
+
+function hasImage(container: HTMLElement): boolean {
+  return Boolean(container.querySelector("img"));
+}
+
+function makeTitle(userText: string, container: HTMLElement): string {
+  const cleanedText = cleanTitle(userText);
+  const fileName = getFileName(container);
+  const imageAttached = hasImage(container);
+
+  let attachmentLabel = "";
+
+  if (fileName) {
+    attachmentLabel = fileName;
+  } else if (imageAttached) {
+    attachmentLabel = "Image attached";
+  }
+
+  if (cleanedText && attachmentLabel) {
+    return `${cleanedText} — ${attachmentLabel}`;
+  }
+
+  if (cleanedText) {
+    return cleanedText;
+  }
+
+  if (attachmentLabel) {
+    return attachmentLabel;
+  }
+
+  return "Untitled";
 }
 
 export function parseSections(): Section[] {
   const sections: Section[] = [];
-  const seenText = new Set<string>();
+  let userOrder = 0;
 
-  const nodes = Array.from(
-    document.querySelectorAll<HTMLElement>(
-      '[data-message-author-role="user"], [data-turn="user"]'
-    )
+  const containers = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-turn-id-container]")
   );
 
-  nodes.forEach((node, index) => {
-    const rawText = node.textContent?.trim() ?? "";
-    const normalized = normalizeText(rawText);
+  containers.forEach((container, index) => {
+    const userNode = container.querySelector<HTMLElement>(
+      '[data-message-author-role="user"]'
+    );
 
-    if (!normalized) return;
+    if (!userNode) return;
 
-    const dedupeKey = normalized.toLowerCase();
-    if (seenText.has(dedupeKey)) return;
-    seenText.add(dedupeKey);
+    const turnId = container.getAttribute("data-turn-id-container") ?? "";
+    const rawText = normalizeText(userNode.textContent ?? "");
+    const title = makeTitle(rawText, container);
 
-    const id = `smart-tab-${index}`;
-    node.dataset.smartTabId = id;
+    if (!turnId && !rawText) return;
 
     sections.push({
-      id,
-      title: cleanTitle(normalized),
-      element: node,
-      rawText: normalized,
-      domOrder: index
+      id: turnId || `smart-tab-${userOrder}`,
+      title,
+      element: container,
+      rawText,
+      domOrder: index,
+      turnId
     });
+
+    userOrder++;
   });
+
+  console.log(
+  "PARSER OUTPUT",
+  sections.map((s) => ({
+    title: s.title,
+    turnId: s.turnId,
+    domOrder: s.domOrder,
+    rawText: s.rawText.slice(0, 80)
+  }))
+);
 
   return sections;
 }
