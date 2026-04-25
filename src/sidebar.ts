@@ -1,14 +1,30 @@
 import type { Section } from "./parser";
 
 const SIDEBAR_ID = "smart-tabs-sidebar";
+const COLLAPSED_ID = "smart-tabs-collapsed";
 
 let currentSections: Section[] = [];
 let activeScrollContainer: HTMLElement | null = null;
 let scrollTimeout: number | null = null;
-let lastActiveRawText: string | null = null;
+let lastActiveId: string | null = null;
+let isHidden = false;
 
-function normalizeText(text: string): string {
-  return text.replace(/^You said:\s*/i, "").replace(/\s+/g, " ").trim();
+interface SidebarActions {
+  onRemoveTab: (section: Section) => void;
+  onRenameTab: (section: Section, newTitle: string) => void;
+  onToggleHidden: () => void;
+}
+
+export function resetSidebarState() {
+  currentSections = [];
+
+  if (activeScrollContainer) {
+    activeScrollContainer.removeEventListener("scroll", handleScroll);
+  }
+
+  activeScrollContainer = null;
+  scrollTimeout = null;
+  lastActiveId = null;
 }
 
 function getScrollableAncestor(el: HTMLElement): HTMLElement | null {
@@ -31,26 +47,11 @@ function getScrollableAncestor(el: HTMLElement): HTMLElement | null {
 
 function findLiveElement(section: Section): HTMLElement | null {
   if (section.turnId) {
-    const el = document.querySelector(
+    return document.querySelector(
       `[data-turn-id-container="${section.turnId}"]`
     ) as HTMLElement | null;
-
-    if (el) return el;
   }
-
-  // fallback (rare)
-  const nodes = Array.from(
-    document.querySelectorAll<HTMLElement>(
-      '[data-message-author-role="user"]'
-    )
-  );
-
-  return nodes.find((node) => {
-    return (
-      normalizeText(node.textContent ?? "").toLowerCase() ===
-      section.rawText.toLowerCase()
-    );
-  }) ?? null;
+  return null;
 }
 
 function getVisualTarget(el: HTMLElement): HTMLElement {
@@ -68,24 +69,20 @@ function jumpToTarget(target: HTMLElement) {
   const targetRect = target.getBoundingClientRect();
   const containerRect = scrollContainer.getBoundingClientRect();
 
-  const targetTopInsideContainer =
+  const offset =
     targetRect.top - containerRect.top + scrollContainer.scrollTop;
 
-  scrollContainer.scrollTop = targetTopInsideContainer - 16;
+  scrollContainer.scrollTop = offset - 16;
 }
 
-function setActiveTab(rawText: string) {
-  lastActiveRawText = rawText;
+function setActiveTab(section: Section) {
+  lastActiveId = section.id;
 
-  const items = Array.from(
-    document.querySelectorAll<HTMLButtonElement>(".smart-tab-item")
-  );
-
-  items.forEach((item) => {
-    if (item.dataset.rawText === rawText) {
-      item.classList.add("smart-tab-active");
+  document.querySelectorAll<HTMLButtonElement>(".smart-tab-item").forEach((el) => {
+    if (el.dataset.sectionId === section.id) {
+      el.classList.add("smart-tab-active");
     } else {
-      item.classList.remove("smart-tab-active");
+      el.classList.remove("smart-tab-active");
     }
   });
 }
@@ -93,33 +90,33 @@ function setActiveTab(rawText: string) {
 function getTopVisibleSection(scrollContainer: HTMLElement): Section | null {
   const containerRect = scrollContainer.getBoundingClientRect();
 
-  let bestSection: Section | null = null;
-  let bestDistanceFromTop = Infinity;
+  let best: Section | null = null;
+  let bestDist = Infinity;
 
   currentSections.forEach((section) => {
-    const liveElement = findLiveElement(section);
-    if (!liveElement) return;
+    if (section.type === "bookmark") return;
 
-    const target = getVisualTarget(liveElement);
+    const el = findLiveElement(section);
+    if (!el) return;
+
+    const target = getVisualTarget(el);
     const rect = target.getBoundingClientRect();
 
-    if (rect.height <= 0) return;
-
-    const isVisible =
+    const visible =
       rect.bottom >= containerRect.top &&
       rect.top <= containerRect.bottom;
 
-    if (!isVisible) return;
+    if (!visible) return;
 
-    const distanceFromTop = Math.abs(rect.top - containerRect.top);
+    const dist = Math.abs(rect.top - containerRect.top);
 
-    if (distanceFromTop < bestDistanceFromTop) {
-      bestDistanceFromTop = distanceFromTop;
-      bestSection = section;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = section;
     }
   });
 
-  return bestSection;
+  return best;
 }
 
 function updateActiveFromScroll() {
@@ -128,30 +125,83 @@ function updateActiveFromScroll() {
   const section = getTopVisibleSection(activeScrollContainer);
   if (!section) return;
 
-  setActiveTab(section.rawText);
+  setActiveTab(section);
 }
 
 function handleScroll() {
   if (scrollTimeout !== null) {
-    window.clearTimeout(scrollTimeout);
+    clearTimeout(scrollTimeout);
   }
 
-  scrollTimeout = window.setTimeout(() => {
-    updateActiveFromScroll();
-  }, 200);
+  scrollTimeout = window.setTimeout(updateActiveFromScroll, 150);
 }
 
+/* =========================
+   exact bookmark highlight
+   ========================= */
+
+function highlightExactText(container: HTMLElement, text: string) {
+  if (!text) return;
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+
+  let node: Text | null;
+
+  while ((node = walker.nextNode() as Text | null)) {
+    const content = node.nodeValue;
+    if (!content) continue;
+
+    const index = content.toLowerCase().indexOf(text.toLowerCase());
+    if (index === -1) continue;
+
+    const before = content.slice(0, index);
+    const match = content.slice(index, index + text.length);
+    const after = content.slice(index + text.length);
+
+    const span = document.createElement("span");
+    span.className = "smart-bookmark-highlight";
+    span.textContent = match;
+
+    const parent = node.parentNode;
+    if (!parent) return;
+
+    const frag = document.createDocumentFragment();
+    if (before) frag.appendChild(document.createTextNode(before));
+    frag.appendChild(span);
+    if (after) frag.appendChild(document.createTextNode(after));
+
+    parent.replaceChild(frag, node);
+
+    span.scrollIntoView({ behavior: "auto", block: "center" });
+
+    setTimeout(() => {
+      span.replaceWith(match);
+    }, 3000);
+
+    return;
+  }
+
+  // fallback
+  container.classList.add("smart-tab-highlight");
+  setTimeout(() => {
+    container.classList.remove("smart-tab-highlight");
+  }, 1400);
+}
+
+/* ========================= */
+
 function setupScrollTracking() {
-  const firstLive = currentSections
+  const first = currentSections
+    .filter((s) => s.type !== "bookmark")
     .map(findLiveElement)
     .find((el): el is HTMLElement => Boolean(el));
 
-  if (!firstLive) return;
+  if (!first) return;
 
-  const scrollContainer = getScrollableAncestor(firstLive);
-  if (!scrollContainer) return;
+  const container = getScrollableAncestor(first);
+  if (!container) return;
 
-  if (activeScrollContainer === scrollContainer) {
+  if (activeScrollContainer === container) {
     updateActiveFromScroll();
     return;
   }
@@ -160,16 +210,123 @@ function setupScrollTracking() {
     activeScrollContainer.removeEventListener("scroll", handleScroll);
   }
 
-  activeScrollContainer = scrollContainer;
+  activeScrollContainer = container;
   activeScrollContainer.addEventListener("scroll", handleScroll);
 
   updateActiveFromScroll();
 }
 
-export function renderSidebar(sections: Section[]) {
+function showCollapsed(actions: SidebarActions) {
+  let btn = document.getElementById(COLLAPSED_ID);
+
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.id = COLLAPSED_ID;
+    btn.textContent = "Tabs";
+    document.body.appendChild(btn);
+  }
+
+  btn.onclick = () => {
+    isHidden = false;
+    btn?.remove();
+    renderSidebar(currentSections, actions);
+  };
+}
+
+function createTabRow(section: Section, actions: SidebarActions) {
+  const row = document.createElement("div");
+  row.className = "smart-tab-row";
+
+  const item = document.createElement("button");
+  item.className = "smart-tab-item";
+  item.textContent = section.title;
+  item.dataset.sectionId = section.id;
+  item.title = "Double-click to rename";
+
+  if (section.type === "bookmark") {
+    item.classList.add("smart-tab-bookmark");
+  }
+
+  item.onclick = () => {
+    const live = findLiveElement(section);
+    if (!live) return;
+
+    const target = getVisualTarget(live);
+
+    jumpToTarget(target);
+    setActiveTab(section);
+
+    if (section.type === "bookmark") {
+      highlightExactText(target, section.rawText);
+    } else {
+      // 🔥 FIXED highlight timing
+      setTimeout(() => {
+        target.classList.add("smart-tab-highlight");
+
+        setTimeout(() => {
+          target.classList.remove("smart-tab-highlight");
+          updateActiveFromScroll();
+        }, 1400);
+      }, 50);
+    }
+  };
+
+  item.ondblclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const input = document.createElement("input");
+    input.className = "smart-tab-rename-input";
+    input.value = section.title;
+
+    item.replaceWith(input);
+    input.focus();
+    input.select();
+
+    const save = () => {
+      const val = input.value.trim();
+      if (val && val !== section.title) {
+        actions.onRenameTab(section, val);
+      } else {
+        input.replaceWith(item);
+      }
+    };
+
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") save();
+      if (e.key === "Escape") input.replaceWith(item);
+    };
+
+    input.onblur = save;
+  };
+
+  const remove = document.createElement("button");
+  remove.className = "smart-tab-remove";
+  remove.textContent = "×";
+
+  remove.onclick = (e) => {
+    e.stopPropagation();
+    actions.onRemoveTab(section);
+  };
+
+  row.appendChild(item);
+  row.appendChild(remove);
+
+  return row;
+}
+
+export function renderSidebar(sections: Section[], actions: SidebarActions) {
   currentSections = sections;
 
   let sidebar = document.getElementById(SIDEBAR_ID);
+
+  if (isHidden) {
+    sidebar?.remove();
+    showCollapsed(actions);
+    return;
+  }
+
+  document.getElementById(COLLAPSED_ID)?.remove();
 
   if (!sidebar) {
     sidebar = document.createElement("div");
@@ -179,85 +336,42 @@ export function renderSidebar(sections: Section[]) {
 
   sidebar.innerHTML = "";
 
-  const title = document.createElement("div");
-  title.className = "smart-tabs-title";
-  title.textContent = "Smart Tabs";
-  sidebar.appendChild(title);
+  const hint = document.createElement("div");
+  hint.className = "smart-tabs-hint";
+  hint.innerHTML = `
+    Bookmark: ⌘/Ctrl + Shift + B<br/>
+    Double-click tab to rename
+  `;
+  sidebar.appendChild(hint);
 
   const list = document.createElement("div");
-  list.className = "smart-tabs-list";
 
-  sections.forEach((section) => {
-    const item = document.createElement("button");
-    item.className = "smart-tab-item";
-    item.textContent = section.title;
-    item.dataset.rawText = section.rawText;
+  const bookmarks = sections.filter((s) => s.type === "bookmark");
+  const normal = sections.filter((s) => s.type !== "bookmark");
 
-    item.addEventListener("click", () => {
-      console.log("TAB CLICK FIRED", {
-        title: section.title,
-        rawText: section.rawText
-      });
+  if (bookmarks.length) {
+    const header = document.createElement("div");
+    header.className = "smart-tabs-divider";
+    header.textContent = "★ Bookmarks";
+    list.appendChild(header);
 
-      const liveElement = findLiveElement(section);
+    bookmarks.forEach((s) => list.appendChild(createTabRow(s, actions)));
 
-      console.log("LIVE ELEMENT", {
-        found: Boolean(liveElement),
-        connected: liveElement?.isConnected,
-        element: liveElement
-      });
+    const line = document.createElement("div");
+    line.className = "smart-tabs-divider-line";
+    list.appendChild(line);
+  }
 
-      if (!liveElement) return;
-
-      const target = getVisualTarget(liveElement);
-      const scrollContainer = getScrollableAncestor(target);
-
-      console.log("TARGET + CONTAINER", {
-        target,
-        targetRect: target.getBoundingClientRect(),
-        scrollContainer,
-        scrollTopBefore: scrollContainer?.scrollTop,
-        scrollHeight: scrollContainer?.scrollHeight,
-        clientHeight: scrollContainer?.clientHeight
-      });
-
-      jumpToTarget(target);
-      setActiveTab(section.rawText);
-
-      setTimeout(() => {
-        console.log("AFTER JUMP", {
-          targetRectAfter: target.getBoundingClientRect(),
-          scrollTopAfter: scrollContainer?.scrollTop
-        });
-      }, 100);
-
-      target.classList.add("smart-tab-highlight");
-      setTimeout(() => {
-        target.classList.remove("smart-tab-highlight");
-        updateActiveFromScroll();
-      }, 300);
-    });
-
-    list.appendChild(item);
-  });
+  normal.forEach((s) => list.appendChild(createTabRow(s, actions)));
 
   sidebar.appendChild(list);
 
-  if (sections.length > 0) {
-    if (lastActiveRawText) {
-      setActiveTab(lastActiveRawText);
-    } else {
-      setActiveTab(sections[0].rawText);
-    }
+  if (sections.length) {
+    const active =
+      sections.find((s) => s.id === lastActiveId) || sections[0];
+
+    setActiveTab(active);
   }
 
   setupScrollTracking();
-}
-
-export function resetSidebarState() {
-  currentSections = [];
-  activeScrollContainer?.removeEventListener("scroll", handleScroll);
-  activeScrollContainer = null;
-  scrollTimeout = null;
-  lastActiveRawText = null;
 }

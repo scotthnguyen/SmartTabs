@@ -5,6 +5,7 @@ export interface Section {
   rawText: string;
   domOrder: number;
   turnId: string;
+  type?: "auto" | "bookmark";
 }
 
 function normalizeText(text: string): string {
@@ -53,24 +54,15 @@ function makeTitle(userText: string, container: HTMLElement): string {
     attachmentLabel = "Image attached";
   }
 
-  if (cleanedText && attachmentLabel) {
-    return `${cleanedText} — ${attachmentLabel}`;
-  }
-
-  if (cleanedText) {
-    return cleanedText;
-  }
-
-  if (attachmentLabel) {
-    return attachmentLabel;
-  }
+  if (cleanedText && attachmentLabel) return `${cleanedText} — ${attachmentLabel}`;
+  if (cleanedText) return cleanedText;
+  if (attachmentLabel) return attachmentLabel;
 
   return "Untitled";
 }
 
 export function parseSections(): Section[] {
   const sections: Section[] = [];
-  let userOrder = 0;
 
   const containers = Array.from(
     document.querySelectorAll<HTMLElement>("[data-turn-id-container]")
@@ -90,26 +82,15 @@ export function parseSections(): Section[] {
     if (!turnId && !rawText) return;
 
     sections.push({
-      id: turnId || `smart-tab-${userOrder}`,
+      id: turnId || `smart-tab-${index}`,
       title,
       element: container,
       rawText,
       domOrder: index,
-      turnId
+      turnId,
+      type: "auto"
     });
-
-    userOrder++;
   });
-
-  console.log(
-  "PARSER OUTPUT",
-  sections.map((s) => ({
-    title: s.title,
-    turnId: s.turnId,
-    domOrder: s.domOrder,
-    rawText: s.rawText.slice(0, 80)
-  }))
-);
 
   return sections;
 }
