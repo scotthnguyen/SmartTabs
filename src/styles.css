@@ -210,3 +210,20 @@
   font-size: 13px;
   outline: none;
 }
+.smart-tab-rename {
+  opacity: 0;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px;
+}
+
+.smart-tab-row:hover .smart-tab-rename {
+  opacity: 1;
+}
+
+.smart-tab-rename:hover {
+  color: white;
+}

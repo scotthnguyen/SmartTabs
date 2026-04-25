@@ -83,7 +83,11 @@ function renameTab(section: Section, newTitle: string) {
 
 function createBookmarkFromSelection() {
   const selection = window.getSelection();
-  const selectedText = selection?.toString().trim();
+  let selectedText = selection?.toString().trim();
+
+if (selectedText && selectedText.length > 100) {
+  selectedText = selectedText.slice(0, 100);
+}
 
   if (!selection || !selectedText) return;
 
@@ -113,6 +117,13 @@ function createBookmarkFromSelection() {
     turnId,
     type: "bookmark"
   };
+
+  console.log("[SmartTabs] created bookmark", {
+  selectedText,
+  turnId,
+  bookmarkId,
+  containerPreview: container.textContent?.slice(0, 300)
+});
 
   sectionMap.set(getKey(bookmark), bookmark);
   renderCurrentSidebar();
