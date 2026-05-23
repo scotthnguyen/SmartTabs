@@ -358,3 +358,7 @@
   line-height: 1.45;
   color: rgba(255, 255, 255, 0.78);
 }
+
+.smart-tabs-modal-hidden {
+  display: none !important;
+}

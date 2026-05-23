@@ -6,6 +6,7 @@ console.log("[SmartTabs] content script loaded", window.location.href);
 let updateTimeout: number | null = null;
 let currentChatKey = "";
 let autoTabsEnabled = true;
+let hasScrolledToLoadMessages = false;
 
 const STORAGE_KEY = "smart-tabs-bookmarks-v2";
 
@@ -70,8 +71,55 @@ function loadBookmarksForCurrentChat() {
 function resetForNewChat() {
   sectionMap.clear();
   removedKeys.clear();
+  hasScrolledToLoadMessages = false;
   resetSidebarState();
   loadBookmarksForCurrentChat();
+}
+
+function getScrollContainer(): HTMLElement | null {
+  const firstMessage = document.querySelector<HTMLElement>(
+    '[data-message-author-role="user"]'
+  );
+  if (firstMessage) {
+    let parent = firstMessage.parentElement;
+    while (parent) {
+      const style = window.getComputedStyle(parent);
+      const canScroll =
+        (style.overflowY === "auto" || style.overflowY === "scroll") &&
+        parent.scrollHeight > parent.clientHeight;
+      if (canScroll) return parent;
+      parent = parent.parentElement;
+    }
+  }
+  return document.querySelector<HTMLElement>("main");
+}
+
+async function scrollToTopAndLoad(scrollContainer: Element): Promise<void> {
+  return new Promise(resolve => {
+    let lastHeight = 0;
+    let stableCount = 0;
+
+    const interval = setInterval(() => {
+      scrollContainer.scrollTop = 0;
+      const newHeight = scrollContainer.scrollHeight;
+
+      if (newHeight === lastHeight) {
+        stableCount++;
+        if (stableCount >= 3) {
+          clearInterval(interval);
+          setTimeout(resolve, 300);
+        }
+      } else {
+        stableCount = 0;
+      }
+      lastHeight = newHeight;
+    }, 500);
+
+    setTimeout(() => {
+      clearInterval(interval);
+      resolve();
+    }, 15000);
+  });
 }
 
 function getOrderedSections(): Section[] {
@@ -107,14 +155,22 @@ function mergeSections(newSections: Section[]) {
     const existing = sectionMap.get(key);
 
     if (existing) {
-      sectionMap.set(key, {
-        ...section,
-        title: existing.title
-      });
+      sectionMap.set(key, { ...section, title: existing.title });
     } else {
       sectionMap.set(key, section);
     }
   });
+
+  const entries = [...sectionMap.entries()];
+  sectionMap.clear();
+  entries
+    .sort(([, a], [, b]) => {
+      if (a.type === "bookmark" && b.type === "bookmark") return b.domOrder - a.domOrder;
+      if (a.type === "bookmark") return -1;
+      if (b.type === "bookmark") return 1;
+      return a.domOrder - b.domOrder;
+    })
+    .forEach(([key, val]) => sectionMap.set(key, val));
 
   renderCurrentSidebar();
 }
@@ -183,7 +239,7 @@ function createLocationBookmark(section: Section, name: string) {
   renderCurrentSidebar();
 }
 
-function init() {
+async function init() {
   const newChatKey = getChatKey();
 
   if (!isInChat()) {
@@ -197,10 +253,21 @@ function init() {
     currentChatKey = newChatKey;
     resetForNewChat();
     removeSidebarFromPage();
-    window.setTimeout(() => {
-      renderCurrentSidebar();
-      mergeSections(parseSections());
-    }, 400);
+    await new Promise<void>(resolve => window.setTimeout(resolve, 400));
+    renderCurrentSidebar();
+  }
+
+  if (!hasScrolledToLoadMessages) {
+    hasScrolledToLoadMessages = true;
+    const scrollContainer = getScrollContainer();
+    if (scrollContainer) {
+      await scrollToTopAndLoad(scrollContainer);
+    }
+    const parsed = parseSections();
+    mergeSections(parsed);
+    if (scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    }
     return;
   }
 

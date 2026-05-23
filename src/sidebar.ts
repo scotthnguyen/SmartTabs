@@ -13,6 +13,7 @@ let latestActions: SidebarActions | null = null;
 let keybindInstalled = false;
 let navObserver: ResizeObserver | null = null;
 let navMutationObserver: MutationObserver | null = null;
+let modalObserver: MutationObserver | null = null;
 
 interface SidebarActions {
   autoTabsEnabled: boolean;
@@ -49,6 +50,8 @@ export function resetSidebarState() {
     navMutationObserver.disconnect();
     navMutationObserver = null;
   }
+
+  disconnectModalWatcher();
 
   document.querySelectorAll(".smart-tab-highlight").forEach((el) => {
     el.classList.remove("smart-tab-highlight");
@@ -118,6 +121,30 @@ function startNavTracking() {
   });
 
   navMutationObserver = mo;
+}
+
+function isModalOpen(): boolean {
+  return !!document.querySelector('[data-testid="modal-file-preview"]');
+}
+
+function updateModalVisibility() {
+  const hidden = isModalOpen();
+  document.getElementById(SIDEBAR_ID)?.classList.toggle("smart-tabs-modal-hidden", hidden);
+  document.getElementById(COLLAPSED_ID)?.classList.toggle("smart-tabs-modal-hidden", hidden);
+}
+
+function installModalWatcher() {
+  if (modalObserver) return;
+  modalObserver = new MutationObserver(updateModalVisibility);
+  modalObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+}
+
+function disconnectModalWatcher() {
+  modalObserver?.disconnect();
+  modalObserver = null;
 }
 
 function getScrollableAncestor(el: HTMLElement): HTMLElement | null {
@@ -847,6 +874,7 @@ export function renderSidebar(sections: Section[], actions: SidebarActions) {
     sidebar.id = SIDEBAR_ID;
     document.body.appendChild(sidebar);
     startNavTracking();
+    installModalWatcher();
   }
 
   sidebar.innerHTML = "";
